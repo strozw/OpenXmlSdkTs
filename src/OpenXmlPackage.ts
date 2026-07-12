@@ -69,6 +69,7 @@ export type OpcBinary = Blob;
 export class OpenXmlPackage {
   private parts: Map<string, OpenXmlPart> = new Map();
   private ctXDoc!: XDocument;
+  private srcZip: JSZip | null = null;
 
   /** @internal */
   protected createPart(pkg: OpenXmlPackage, uri: string, contentType: string | null, partType: PartType, data: unknown): OpenXmlPart {
@@ -565,7 +566,20 @@ export class OpenXmlPackage {
   }
 
   private async saveToZip(): Promise<JSZip> {
-    const zip = new JSZip();
+    const zip = this.srcZip ?? new JSZip();
+
+    if (this.srcZip) {
+      for (const name of Object.keys(zip.files)) {
+        if (zip.files[name].dir || name === "[Content_Types].xml") {
+          continue;
+        }
+
+        if (!this.parts.has("/" + name)) {
+          zip.remove(name);
+        }
+      }
+    }
+
     zip.file("[Content_Types].xml", this.ctXDoc.toString());
 
     for (const [uri, part] of this.parts) {
@@ -576,6 +590,10 @@ export class OpenXmlPackage {
       const name = uri.startsWith("/") ? uri.substring(1) : uri;
       const partType = part.getPartType();
       const data = part.getData();
+
+      if (data === zip.files[name]) {
+        continue;
+      }
 
       if (partType === "xml") {
         if (data instanceof XDocument) {
@@ -724,6 +742,7 @@ export class OpenXmlPackage {
     }
     const ctData = await ctZipFile.async("string");
     pkg.ctXDoc = XDocument.parse(ctData);
+    pkg.srcZip = zip;
 
     for (const f in zip.files) {
       const zipFile = zip.files[f];

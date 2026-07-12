@@ -285,6 +285,36 @@ describe("OpenXmlPackage", () => {
     expect(roundTrippedParts).toEqual(originalParts);
   });
 
+  it("saves the same package twice, picking up modifications made between saves", async () => {
+    const srcFile = path.resolve(__dirname, "../test-files/BlankDocument.docx");
+    const buffer = fs.readFileSync(srcFile);
+    const blob = new Blob([buffer]);
+    const pkg = await OpenXmlPackage.open(blob);
+
+    const saved1 = await pkg.saveToBlobAsync();
+    const pkg1 = await OpenXmlPackage.open(saved1);
+    expect(pkg1.getParts().map((p) => p.getUri()).sort()).toEqual(
+      pkg
+        .getParts()
+        .map((p) => p.getUri())
+        .sort(),
+    );
+
+    const docPart = pkg.getParts().find((p) => p.getUri() === "/word/document.xml")!;
+    const docXDoc = await docPart.getXDocument();
+    docXDoc.root!.element(W.body)!.add(new XElement(W.p, new XElement(W.r, new XElement(W.t, "Added between saves"))));
+    docPart.putXDocument(docXDoc);
+
+    const saved2 = await pkg.saveToBlobAsync();
+    const pkg2 = await OpenXmlPackage.open(saved2);
+    const docXDoc2 = await pkg2
+      .getParts()
+      .find((p) => p.getUri() === "/word/document.xml")!
+      .getXDocument();
+    const texts = docXDoc2.root!.descendants(W.t).map((t) => t.value);
+    expect(texts).toContain("Added between saves");
+  });
+
   it("adds a comments part to a blank document and round-trips correctly", async () => {
     const srcFile = path.resolve(__dirname, "../test-files/BlankDocument.docx");
     const buffer = fs.readFileSync(srcFile);
