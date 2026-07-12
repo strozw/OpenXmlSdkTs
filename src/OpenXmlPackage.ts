@@ -37,6 +37,87 @@ export type FlatOpcString = string;
  */
 export type OpcBinary = Blob;
 
+// The compression-related subset of JSZip's per-file options, also accepted by
+// generateAsync(). Deriving it from JSZip's typings keeps the values we pass in
+// sync with what JSZip actually accepts.
+type ZipCompressionOptions = Pick<JSZip.JSZipFileOptions, "compression" | "compressionOptions">;
+
+/**
+ * A ZIP compression method for a part: `"STORE"` (no compression) or `"DEFLATE"`.
+ *
+ * @category Class and Type Reference
+ */
+export type CompressionMethod = "STORE" | "DEFLATE";
+
+/**
+ * A compression method plus an optional DEFLATE level for a part.
+ *
+ * @category Class and Type Reference
+ */
+export interface CompressionSpec {
+  /** The ZIP compression method to use for the part. */
+  compression: CompressionMethod;
+  /** DEFLATE compression level, 1 (fastest) to 9 (best compression). Ignored for `"STORE"`. */
+  level?: number;
+}
+
+/**
+ * Options accepted by {@link OpenXmlPackage.saveToBlobAsync} and
+ * {@link OpenXmlPackage.saveToBase64Async}.
+ *
+ * @category Class and Type Reference
+ */
+export interface SaveOptions {
+  /**
+   * Chooses the ZIP compression for parts.
+   *
+   * @remarks
+   * Pass a {@link CompressionMethod} or {@link CompressionSpec} to apply it to
+   * every part, or a callback invoked once per part for per-part control.
+   * `"STORE"` writes a part uncompressed (useful for already-compressed media
+   * such as PNG or JPEG images, where DEFLATE costs CPU for near-zero size
+   * gain). A callback may return `undefined` to fall back to
+   * {@link SaveOptions.defaultCompression | defaultCompression}. The
+   * content-types and relationship parts are not affected.
+   *
+   * @example
+   * ```typescript
+   * // Same method for every part
+   * const fast = await doc.saveToBlobAsync({ partCompression: { compression: "DEFLATE", level: 1 } });
+   *
+   * // Per-part control
+   * const blob = await doc.saveToBlobAsync({
+   *   partCompression: (part) => {
+   *     const ct = part.getContentType() ?? "";
+   *     if (ct.startsWith("image/") || ct.startsWith("video/")) return "STORE";
+   *     return { compression: "DEFLATE", level: 6 };
+   *   },
+   * });
+   * ```
+   */
+  partCompression?: CompressionMethod | CompressionSpec | ((part: OpenXmlPart) => CompressionMethod | CompressionSpec | undefined);
+
+  /**
+   * The fallback compression for parts
+   * {@link SaveOptions.partCompression | partCompression} does not decide:
+   * parts for which the callback returns `undefined`, or every part when
+   * `partCompression` is not given.
+   *
+   * @remarks
+   * Defaults to `"DEFLATE"` at JSZip's standard level (6). Set
+   * `{ compression: "DEFLATE", level: 1 }` to trade output size for save
+   * speed, or `"STORE"` to skip compression entirely. The content-types and
+   * relationship parts are not affected; they always use the library default.
+   *
+   * @example
+   * ```typescript
+   * // Fastest save: store all parts uncompressed
+   * const blob = await doc.saveToBlobAsync({ defaultCompression: "STORE" });
+   * ```
+   */
+  defaultCompression?: CompressionMethod | CompressionSpec;
+}
+
 /**
  * Base class for all Open XML document packages.
  *
@@ -457,6 +538,7 @@ export class OpenXmlPackage {
    * @remarks
    * Useful for embedding documents in JSON payloads, data URIs, or text-based storage.
    *
+   * @param options - Optional {@link SaveOptions}, e.g. a per-part compression callback.
    * @returns A promise resolving to the Base64 string.
    *
    * @example
@@ -464,14 +546,15 @@ export class OpenXmlPackage {
    * const base64 = await pkg.saveToBase64Async();
    * ```
    */
-  async saveToBase64Async(): Promise<Base64String> {
-    const zip = await this.saveToZip();
+  async saveToBase64Async(options?: SaveOptions): Promise<Base64String> {
+    const zip = await this.saveToZip(options);
     return zip.generateAsync({ type: "base64", compression: "DEFLATE" });
   }
 
   /**
    * Saves the package as a binary Blob (ZIP).
    *
+   * @param options - Optional {@link SaveOptions}, e.g. a per-part compression callback.
    * @returns A promise resolving to a Blob containing the document bytes.
    *
    * @example
@@ -482,8 +565,8 @@ export class OpenXmlPackage {
    * fs.writeFileSync("output.docx", buffer);
    * ```
    */
-  async saveToBlobAsync(): Promise<OpcBinary> {
-    const zip = await this.saveToZip();
+  async saveToBlobAsync(options?: SaveOptions): Promise<OpcBinary> {
+    const zip = await this.saveToZip(options);
     return zip.generateAsync({ type: "blob", compression: "DEFLATE" });
   }
 
@@ -564,7 +647,27 @@ export class OpenXmlPackage {
     });
   }
 
-  private async saveToZip(): Promise<JSZip> {
+  private static normalizeCompressionSpec(spec: CompressionMethod | CompressionSpec): ZipCompressionOptions {
+    const resolved: CompressionSpec = typeof spec === "string" ? { compression: spec } : spec;
+    return {
+      compression: resolved.compression,
+      compressionOptions: resolved.compression === "DEFLATE" && resolved.level !== undefined ? { level: resolved.level } : undefined,
+    };
+  }
+
+  private resolvePartCompression(part: OpenXmlPart, options?: SaveOptions): ZipCompressionOptions {
+    if (part.getContentType() === ContentType.relationships) {
+      return {};
+    }
+    const partCompression = options?.partCompression;
+    const spec = (typeof partCompression === "function" ? partCompression(part) : partCompression) ?? options?.defaultCompression;
+    if (spec === undefined) {
+      return {};
+    }
+    return OpenXmlPackage.normalizeCompressionSpec(spec);
+  }
+
+  private async saveToZip(options?: SaveOptions): Promise<JSZip> {
     const zip = new JSZip();
     zip.file("[Content_Types].xml", this.ctXDoc.toString());
 
@@ -576,20 +679,21 @@ export class OpenXmlPackage {
       const name = uri.startsWith("/") ? uri.substring(1) : uri;
       const partType = part.getPartType();
       const data = part.getData();
+      const fileOptions = this.resolvePartCompression(part, options);
 
       if (partType === "xml") {
         if (data instanceof XDocument) {
-          zip.file(name, data.toString());
+          zip.file(name, data.toString(), fileOptions);
         } else {
           const xmlStr = await (data as { async(type: string): Promise<string> }).async("string");
-          zip.file(name, xmlStr);
+          zip.file(name, xmlStr, fileOptions);
         }
       } else {
         if (typeof data === "string") {
-          zip.file(name, data, { base64: true });
+          zip.file(name, data, { ...fileOptions, base64: true });
         } else {
           const bytes = await (data as { async(type: string): Promise<Uint8Array> }).async("uint8array");
-          zip.file(name, bytes);
+          zip.file(name, bytes, fileOptions);
         }
       }
     }

@@ -578,4 +578,145 @@ describe("OpenXmlPackage", () => {
     const docXDoc2 = await docPart2.getXDocument();
     expect(docXDoc2.root!.descendants(W.commentRangeStart).length).toBe(0);
   });
+
+  const entryCompressionMagic = async (blob: Blob, name: string): Promise<string> => {
+    const zip = await JSZip.loadAsync(Buffer.from(await blob.arrayBuffer()));
+    const entry = zip.files[name] as unknown as { _data: { compression: { magic: string } } };
+    return entry._data.compression.magic;
+  };
+
+  const STORE_MAGIC = String.fromCharCode(0, 0);
+  const DEFLATE_MAGIC = String.fromCharCode(8, 0);
+
+  it("applies the per-part compression callback when saving", async () => {
+    const srcFile = path.resolve(__dirname, "../test-files/BlankDocument.docx");
+    const buffer = fs.readFileSync(srcFile);
+    const pkg = await OpenXmlPackage.open(new Blob([buffer]));
+
+    const imageBase64 = Buffer.from("not really a png, but binary enough").toString("base64");
+    pkg.addPart("/word/media/image1.png", "image/png", "base64", imageBase64);
+
+    const seenUris: string[] = [];
+    const saved = await pkg.saveToBlobAsync({
+      partCompression: (part) => {
+        seenUris.push(part.getUri());
+        return part.getContentType()?.startsWith("image/") ? "STORE" : undefined;
+      },
+    });
+
+    // Callback saw content parts but not relationship parts
+    expect(seenUris).toContain("/word/document.xml");
+    expect(seenUris).toContain("/word/media/image1.png");
+    expect(seenUris.some((u) => u.endsWith(".rels"))).toBe(false);
+
+    // Image entry is STORE'd (magic \0\0), XML entry stays DEFLATE'd (magic \b\0)
+    expect(await entryCompressionMagic(saved, "word/media/image1.png")).toBe(STORE_MAGIC);
+    expect(await entryCompressionMagic(saved, "word/document.xml")).toBe(DEFLATE_MAGIC);
+
+    // The saved package still round-trips with the image intact
+    const pkg2 = await OpenXmlPackage.open(saved);
+    expect(pkg2.getParts().find((p) => p.getUri() === "/word/media/image1.png")).toBeDefined();
+  });
+
+  it("honors the DEFLATE level from the compression callback", async () => {
+    const srcFile = path.resolve(__dirname, "../test-files/BlankDocument.docx");
+    const buffer = fs.readFileSync(srcFile);
+    const pkg = await OpenXmlPackage.open(new Blob([buffer]));
+
+    const docPart = pkg.getParts().find((p) => p.getUri() === "/word/document.xml")!;
+    const docXDoc = await docPart.getXDocument();
+    for (let i = 0; i < 200; i++) {
+      docXDoc.root!.element(W.body)!.add(new XElement(W.p, new XElement(W.r, new XElement(W.t, `repetitive filler text, paragraph ${i % 10}`))));
+    }
+    docPart.putXDocument(docXDoc);
+
+    const fastest = await pkg.saveToBlobAsync({ partCompression: () => ({ compression: "DEFLATE", level: 1 }) });
+    const smallest = await pkg.saveToBlobAsync({ partCompression: () => ({ compression: "DEFLATE", level: 9 }) });
+
+    expect(smallest.size).toBeLessThanOrEqual(fastest.size);
+
+    // Both remain valid packages
+    const reopened = await OpenXmlPackage.open(fastest);
+    expect(reopened.getParts().find((p) => p.getUri() === "/word/document.xml")).toBeDefined();
+  });
+
+  it("saves identically to the default when the callback returns undefined", async () => {
+    const srcFile = path.resolve(__dirname, "../test-files/BlankDocument.docx");
+    const buffer = fs.readFileSync(srcFile);
+    const pkg = await OpenXmlPackage.open(new Blob([buffer]));
+
+    const withCallback = await pkg.saveToBlobAsync({ partCompression: () => undefined });
+    const withoutOptions = await pkg.saveToBlobAsync();
+
+    expect(await entryCompressionMagic(withCallback, "word/document.xml")).toBe(DEFLATE_MAGIC);
+    expect(withCallback.size).toBe(withoutOptions.size);
+  });
+
+  it("applies defaultCompression to parts the callback does not decide", async () => {
+    const srcFile = path.resolve(__dirname, "../test-files/BlankDocument.docx");
+    const buffer = fs.readFileSync(srcFile);
+    const pkg = await OpenXmlPackage.open(new Blob([buffer]));
+
+    const saved = await pkg.saveToBlobAsync({ defaultCompression: "STORE" });
+
+    expect(await entryCompressionMagic(saved, "word/document.xml")).toBe(STORE_MAGIC);
+    expect(await entryCompressionMagic(saved, "word/styles.xml")).toBe(STORE_MAGIC);
+    // Management files are not affected by defaultCompression
+    expect(await entryCompressionMagic(saved, "_rels/.rels")).toBe(DEFLATE_MAGIC);
+    expect(await entryCompressionMagic(saved, "[Content_Types].xml")).toBe(DEFLATE_MAGIC);
+
+    const reopened = await OpenXmlPackage.open(saved);
+    expect(reopened.getParts().find((p) => p.getUri() === "/word/document.xml")).toBeDefined();
+  });
+
+  it("lets the per-part callback override defaultCompression", async () => {
+    const srcFile = path.resolve(__dirname, "../test-files/BlankDocument.docx");
+    const buffer = fs.readFileSync(srcFile);
+    const pkg = await OpenXmlPackage.open(new Blob([buffer]));
+
+    const saved = await pkg.saveToBlobAsync({
+      defaultCompression: "STORE",
+      partCompression: (part) => (part.getUri() === "/word/document.xml" ? "DEFLATE" : undefined),
+    });
+
+    expect(await entryCompressionMagic(saved, "word/document.xml")).toBe(DEFLATE_MAGIC);
+    expect(await entryCompressionMagic(saved, "word/styles.xml")).toBe(STORE_MAGIC);
+  });
+
+  it("accepts a plain value for partCompression and applies it to every part", async () => {
+    const srcFile = path.resolve(__dirname, "../test-files/BlankDocument.docx");
+    const buffer = fs.readFileSync(srcFile);
+    const pkg = await OpenXmlPackage.open(new Blob([buffer]));
+
+    const saved = await pkg.saveToBlobAsync({ partCompression: "STORE" });
+
+    expect(await entryCompressionMagic(saved, "word/document.xml")).toBe(STORE_MAGIC);
+    expect(await entryCompressionMagic(saved, "word/styles.xml")).toBe(STORE_MAGIC);
+    // Management files keep the library default
+    expect(await entryCompressionMagic(saved, "_rels/.rels")).toBe(DEFLATE_MAGIC);
+
+    const reopened = await OpenXmlPackage.open(saved);
+    expect(reopened.getParts().find((p) => p.getUri() === "/word/document.xml")).toBeDefined();
+  });
+
+  it("honors the DEFLATE level given via defaultCompression", async () => {
+    const srcFile = path.resolve(__dirname, "../test-files/BlankDocument.docx");
+    const buffer = fs.readFileSync(srcFile);
+    const pkg = await OpenXmlPackage.open(new Blob([buffer]));
+
+    const docPart = pkg.getParts().find((p) => p.getUri() === "/word/document.xml")!;
+    const docXDoc = await docPart.getXDocument();
+    for (let i = 0; i < 200; i++) {
+      docXDoc.root!.element(W.body)!.add(new XElement(W.p, new XElement(W.r, new XElement(W.t, `repetitive filler text, paragraph ${i % 10}`))));
+    }
+    docPart.putXDocument(docXDoc);
+
+    const fastest = await pkg.saveToBlobAsync({ defaultCompression: { compression: "DEFLATE", level: 1 } });
+    const smallest = await pkg.saveToBlobAsync({ defaultCompression: { compression: "DEFLATE", level: 9 } });
+
+    expect(smallest.size).toBeLessThanOrEqual(fastest.size);
+
+    const reopened = await OpenXmlPackage.open(fastest);
+    expect(reopened.getParts().find((p) => p.getUri() === "/word/document.xml")).toBeDefined();
+  });
 });
