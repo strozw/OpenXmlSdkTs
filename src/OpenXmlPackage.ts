@@ -67,6 +67,23 @@ export type OpcBinary = Blob;
  * @category Class and Type Reference
  */
 export class OpenXmlPackage {
+  // Media formats whose data is already compressed. Deflating them again costs
+  // CPU for near-zero size gain, so they are stored uncompressed in the ZIP.
+  private static readonly precompressedContentTypes = new Set<string>([
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/gif",
+    "image/webp",
+    "video/mp4",
+    "video/mpeg",
+    "video/webm",
+    "video/quicktime",
+    "audio/mpeg",
+    "audio/mp4",
+    "audio/ogg",
+  ]);
+
   private parts: Map<string, OpenXmlPart> = new Map();
   private ctXDoc!: XDocument;
 
@@ -585,11 +602,12 @@ export class OpenXmlPackage {
           zip.file(name, xmlStr);
         }
       } else {
+        const compression = OpenXmlPackage.precompressedContentTypes.has(part.getContentType() ?? "") ? "STORE" : undefined;
         if (typeof data === "string") {
-          zip.file(name, data, { base64: true });
+          zip.file(name, data, { base64: true, compression });
         } else {
           const bytes = await (data as { async(type: string): Promise<Uint8Array> }).async("uint8array");
-          zip.file(name, bytes);
+          zip.file(name, bytes, { compression });
         }
       }
     }
