@@ -652,7 +652,7 @@ describe("OpenXmlPackage", () => {
     expect(withCallback.size).toBe(withoutOptions.size);
   });
 
-  it("applies defaultCompression to parts the callback does not decide", async () => {
+  it("applies compression to parts the callback does not decide", async () => {
     const srcFile = path.resolve(__dirname, "../test-files/BlankDocument.docx");
     const buffer = fs.readFileSync(srcFile);
     const pkg = await OpenXmlPackage.open(new Blob([buffer]));
@@ -661,7 +661,7 @@ describe("OpenXmlPackage", () => {
 
     expect(await entryCompressionMagic(saved, "word/document.xml")).toBe(STORE_MAGIC);
     expect(await entryCompressionMagic(saved, "word/styles.xml")).toBe(STORE_MAGIC);
-    // Management files are not affected by defaultCompression
+    // Management files are not affected by compression
     expect(await entryCompressionMagic(saved, "_rels/.rels")).toBe(DEFLATE_MAGIC);
     expect(await entryCompressionMagic(saved, "[Content_Types].xml")).toBe(DEFLATE_MAGIC);
 
@@ -669,7 +669,7 @@ describe("OpenXmlPackage", () => {
     expect(reopened.getParts().find((p) => p.getUri() === "/word/document.xml")).toBeDefined();
   });
 
-  it("lets the per-part callback override defaultCompression", async () => {
+  it("lets the per-part callback override compression", async () => {
     const srcFile = path.resolve(__dirname, "../test-files/BlankDocument.docx");
     const buffer = fs.readFileSync(srcFile);
     const pkg = await OpenXmlPackage.open(new Blob([buffer]));
@@ -699,7 +699,7 @@ describe("OpenXmlPackage", () => {
     expect(reopened.getParts().find((p) => p.getUri() === "/word/document.xml")).toBeDefined();
   });
 
-  it("honors the DEFLATE level given via defaultCompression", async () => {
+  it("honors the DEFLATE level given via compression", async () => {
     const srcFile = path.resolve(__dirname, "../test-files/BlankDocument.docx");
     const buffer = fs.readFileSync(srcFile);
     const pkg = await OpenXmlPackage.open(new Blob([buffer]));

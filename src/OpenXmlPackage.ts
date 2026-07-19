@@ -77,20 +77,20 @@ export interface SaveOptions {
    * `"STORE"` writes a part uncompressed (useful for already-compressed media
    * such as PNG or JPEG images, where DEFLATE costs CPU for near-zero size
    * gain). A callback may return `undefined` to fall back to
-   * {@link SaveOptions.compression | defaultCompression}. The
+   * {@link SaveOptions.compression | compression}. The
    * content-types and relationship parts are not affected.
    *
    * @example
    * ```typescript
    * // Same method for every part
-   * const fast = await doc.saveToBlobAsync({ partCompression: { compression: "DEFLATE", level: 1 } });
+   * const fast = await doc.saveToBlobAsync({ partCompression: { method: "DEFLATE", level: 1 } });
    *
    * // Per-part control
    * const blob = await doc.saveToBlobAsync({
    *   partCompression: (part) => {
    *     const ct = part.getContentType() ?? "";
    *     if (ct.startsWith("image/") || ct.startsWith("video/")) return "STORE";
-   *     return { compression: "DEFLATE", level: 6 };
+   *     return { method: "DEFLATE", level: 6 };
    *   },
    * });
    * ```
@@ -105,14 +105,14 @@ export interface SaveOptions {
    *
    * @remarks
    * Defaults to `"DEFLATE"` at JSZip's standard level (6). Set
-   * `{ compression: "DEFLATE", level: 1 }` to trade output size for save
+   * `{ method: "DEFLATE", level: 1 }` to trade output size for save
    * speed, or `"STORE"` to skip compression entirely. The content-types and
    * relationship parts are not affected; they always use the library default.
    *
    * @example
    * ```typescript
    * // Fastest save: store all parts uncompressed
-   * const blob = await doc.saveToBlobAsync({ defaultCompression: "STORE" });
+   * const blob = await doc.saveToBlobAsync({ compression: "STORE" });
    * ```
    */
   compression?: CompressionMethod | CompressionSpec;
