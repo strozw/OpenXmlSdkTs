@@ -630,8 +630,8 @@ describe("OpenXmlPackage", () => {
     }
     docPart.putXDocument(docXDoc);
 
-    const fastest = await pkg.saveToBlobAsync({ partCompression: () => ({ compression: "DEFLATE", level: 1 }) });
-    const smallest = await pkg.saveToBlobAsync({ partCompression: () => ({ compression: "DEFLATE", level: 9 }) });
+    const fastest = await pkg.saveToBlobAsync({ partCompression: () => ({ method: "DEFLATE", level: 1 }) });
+    const smallest = await pkg.saveToBlobAsync({ partCompression: () => ({ method: "DEFLATE", level: 9 }) });
 
     expect(smallest.size).toBeLessThanOrEqual(fastest.size);
 
@@ -657,7 +657,7 @@ describe("OpenXmlPackage", () => {
     const buffer = fs.readFileSync(srcFile);
     const pkg = await OpenXmlPackage.open(new Blob([buffer]));
 
-    const saved = await pkg.saveToBlobAsync({ defaultCompression: "STORE" });
+    const saved = await pkg.saveToBlobAsync({ compression: "STORE" });
 
     expect(await entryCompressionMagic(saved, "word/document.xml")).toBe(STORE_MAGIC);
     expect(await entryCompressionMagic(saved, "word/styles.xml")).toBe(STORE_MAGIC);
@@ -675,7 +675,7 @@ describe("OpenXmlPackage", () => {
     const pkg = await OpenXmlPackage.open(new Blob([buffer]));
 
     const saved = await pkg.saveToBlobAsync({
-      defaultCompression: "STORE",
+      compression: "STORE",
       partCompression: (part) => (part.getUri() === "/word/document.xml" ? "DEFLATE" : undefined),
     });
 
@@ -711,8 +711,8 @@ describe("OpenXmlPackage", () => {
     }
     docPart.putXDocument(docXDoc);
 
-    const fastest = await pkg.saveToBlobAsync({ defaultCompression: { compression: "DEFLATE", level: 1 } });
-    const smallest = await pkg.saveToBlobAsync({ defaultCompression: { compression: "DEFLATE", level: 9 } });
+    const fastest = await pkg.saveToBlobAsync({ compression: { method: "DEFLATE", level: 1 } });
+    const smallest = await pkg.saveToBlobAsync({ compression: { method: "DEFLATE", level: 9 } });
 
     expect(smallest.size).toBeLessThanOrEqual(fastest.size);
 

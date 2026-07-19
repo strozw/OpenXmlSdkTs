@@ -56,7 +56,7 @@ export type CompressionMethod = "STORE" | "DEFLATE";
  */
 export interface CompressionSpec {
   /** The ZIP compression method to use for the part. */
-  compression: CompressionMethod;
+  method: CompressionMethod;
   /** DEFLATE compression level, 1 (fastest) to 9 (best compression). Ignored for `"STORE"`. */
   level?: number;
 }
@@ -77,7 +77,7 @@ export interface SaveOptions {
    * `"STORE"` writes a part uncompressed (useful for already-compressed media
    * such as PNG or JPEG images, where DEFLATE costs CPU for near-zero size
    * gain). A callback may return `undefined` to fall back to
-   * {@link SaveOptions.defaultCompression | defaultCompression}. The
+   * {@link SaveOptions.compression | defaultCompression}. The
    * content-types and relationship parts are not affected.
    *
    * @example
@@ -115,7 +115,7 @@ export interface SaveOptions {
    * const blob = await doc.saveToBlobAsync({ defaultCompression: "STORE" });
    * ```
    */
-  defaultCompression?: CompressionMethod | CompressionSpec;
+  compression?: CompressionMethod | CompressionSpec;
 }
 
 /**
@@ -648,10 +648,10 @@ export class OpenXmlPackage {
   }
 
   private static normalizeCompressionSpec(spec: CompressionMethod | CompressionSpec): ZipCompressionOptions {
-    const resolved: CompressionSpec = typeof spec === "string" ? { compression: spec } : spec;
+    const resolved: CompressionSpec = typeof spec === "string" ? { method: spec } : spec;
     return {
-      compression: resolved.compression,
-      compressionOptions: resolved.compression === "DEFLATE" && resolved.level !== undefined ? { level: resolved.level } : undefined,
+      compression: resolved.method,
+      compressionOptions: resolved.method === "DEFLATE" && resolved.level !== undefined ? { level: resolved.level } : undefined,
     };
   }
 
@@ -660,7 +660,7 @@ export class OpenXmlPackage {
       return {};
     }
     const partCompression = options?.partCompression;
-    const spec = (typeof partCompression === "function" ? partCompression(part) : partCompression) ?? options?.defaultCompression;
+    const spec = (typeof partCompression === "function" ? partCompression(part) : partCompression) ?? options?.compression;
     if (spec === undefined) {
       return {};
     }
